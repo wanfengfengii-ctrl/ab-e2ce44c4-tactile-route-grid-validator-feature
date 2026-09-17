@@ -11,10 +11,15 @@ import {
   GRID_SIZE,
   type CellType,
   type Grid,
+  cellKey,
   compareRowMajor,
   countCellTypes,
   validateGrid,
 } from './grid';
+import {
+  auditSingleBrickFailure,
+  type SingleBrickAudit,
+} from './audit';
 import { GridImportError, gridToJson, parseGridJson } from './io';
 import { GridBoard } from './components/GridBoard';
 
@@ -53,6 +58,9 @@ export default function App() {
   const [tool, setTool] = useState<CellType>('guide');
   const [focus, setFocus] = useState({ row: 0, col: 0 });
   const [importError, setImportError] = useState<string | null>(null);
+  // 单砖失效审计报告：仅在用户显式启动时生成，编辑 / 导入 / 清空即撤销。
+  const [audit, setAudit] = useState<SingleBrickAudit | null>(null);
+  const [selectedBrickKey, setSelectedBrickKey] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 网格任意变化即重算，旧结果被立即替换。
@@ -64,6 +72,15 @@ export default function App() {
     counts.entrance <= 4 &&
     counts.shelter >= 1 &&
     counts.shelter <= 4;
+
+  // 仅在即时连通判定通过且端点数量合法时，才允许启动单砖失效审计。
+  const auditEnabled =
+    importError === null && endpointsValid && failure === null;
+
+  const revokeAudit = useCallback(() => {
+    setAudit(null);
+    setSelectedBrickKey(null);
+  }, []);
 
   const reachableKeys = useMemo(() => {
     if (!failure) return new Set<number>();
@@ -84,6 +101,43 @@ export default function App() {
     );
   }, [failure]);
 
+  // 当前选中的关键砖及其影响到的端点（入口 + 避难点）。
+  const selectedImpact = useMemo(() => {
+    if (!audit || selectedBrickKey === null) return null;
+    return (
+      audit.criticalBricks.find(
+        (impact) =>
+          cellKey(impact.brick.row, impact.brick.col) === selectedBrickKey,
+      ) ?? null
+    );
+  }, [audit, selectedBrickKey]);
+
+  const auditEndpointKeys = useMemo(() => {
+    const keys = new Set<number>();
+    if (selectedImpact) {
+      for (const pair of selectedImpact.brokenPairs) {
+        keys.add(cellKey(pair.entrance.row, pair.entrance.col));
+        keys.add(cellKey(pair.shelter.row, pair.shelter.col));
+      }
+    }
+    return keys;
+  }, [selectedImpact]);
+
+  const onRunAudit = useCallback(() => {
+    if (!auditEnabled) return;
+    const report = auditSingleBrickFailure(grid);
+    setAudit(report);
+    // 默认选中第一块关键砖，画布立即给出高亮反馈。
+    setSelectedBrickKey(
+      report.criticalBricks.length > 0
+        ? cellKey(
+            report.criticalBricks[0].brick.row,
+            report.criticalBricks[0].brick.col,
+          )
+        : null,
+    );
+  }, [auditEnabled, grid]);
+
   const paintCell = useCallback(
     (row: number, col: number, type: CellType) => {
       setGrid((prev) => {
@@ -93,8 +147,10 @@ export default function App() {
         return next;
       });
       setImportError(null);
+      // 任何编辑都使既有审计报告失效。
+      revokeAudit();
     },
-    [],
+    [revokeAudit],
   );
 
   const moveFocus = useCallback((dr: number, dc: number) => {
@@ -147,11 +203,16 @@ export default function App() {
     [moveFocus, paintCell, tool],
   );
 
-  // 导入被拒绝时：整份拒绝（保留当前网格）、清除旧结论、显示错误。
-  const rejectImport = useCallback((message: string) => {
-    setImportError(message);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  }, []);
+  // 导入被拒绝时：整份拒绝（保留当前网格）、清除旧结论、显示错误；
+  // 拒绝不产生任何审计结果，既有报告一并撤销。
+  const rejectImport = useCallback(
+    (message: string) => {
+      setImportError(message);
+      revokeAudit();
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    },
+    [revokeAudit],
+  );
 
   const onImportFile = useCallback(
     async (file: File) => {
@@ -160,6 +221,8 @@ export default function App() {
         const parsed = parseGridJson(text);
         setGrid(parsed);
         setImportError(null);
+        // 合法导入替换网格，旧审计报告随之失效。
+        revokeAudit();
         if (fileInputRef.current) fileInputRef.current.value = '';
       } catch (error) {
         const message =
@@ -169,7 +232,7 @@ export default function App() {
         rejectImport(message);
       }
     },
-    [rejectImport],
+    [rejectImport, revokeAudit],
   );
 
   const onFileInputChange = useCallback(
@@ -201,7 +264,8 @@ export default function App() {
       ),
     );
     setImportError(null);
-  }, []);
+    revokeAudit();
+  }, [revokeAudit]);
 
   // 导入失败时不展示旧判定结论（旧结论被错误提示替换）。
   const resultSuppressed = importError !== null;
@@ -280,6 +344,12 @@ export default function App() {
           failedEntrance={failure?.entrance ?? null}
           failedShelter={failure?.shelter ?? null}
           showOverlay={!resultSuppressed && failure !== null}
+          auditBrickKey={
+            selectedImpact
+              ? cellKey(selectedImpact.brick.row, selectedImpact.brick.col)
+              : null
+          }
+          auditEndpointKeys={auditEndpointKeys}
           onPaint={paintCell}
           onFocusChange={setFocus}
           onCellKeyDown={onCellKeyDown}
@@ -347,6 +417,92 @@ export default function App() {
             </div>
           )}
 
+          <section className="audit" aria-label="单砖失效审计">
+            <h3>单砖失效审计</h3>
+            <button
+              type="button"
+              className="action-button"
+              onClick={onRunAudit}
+              disabled={!auditEnabled}
+              data-testid="audit-button"
+            >
+              开始单砖失效审计
+            </button>
+            {!auditEnabled && (
+              <p className="hint" data-testid="audit-disabled-hint">
+                需入口 / 避难点各 1–4 个且即时连通判定通过后，才能启动审计。
+              </p>
+            )}
+
+            {audit !== null && audit.criticalBricks.length === 0 && (
+              <div
+                className="banner banner--ok"
+                role="status"
+                data-testid="audit-none"
+              >
+                ✔ 网络可承受任一单砖失效：移除任意一块导向砖，
+                每个入口仍能到达每个避难点。
+              </div>
+            )}
+
+            {audit !== null && audit.criticalBricks.length > 0 && (
+              <div className="audit-report" data-testid="audit-report">
+                <p className="audit-summary" data-testid="audit-summary">
+                  发现 <strong>{audit.criticalBricks.length}</strong>{' '}
+                  块关键砖：移除其中任意一块，都会有入口—避难点对断开。
+                  选择一块砖查看受影响关系。
+                </p>
+                <ul className="audit-bricks">
+                  {audit.criticalBricks.map((impact, index) => {
+                    const key = cellKey(impact.brick.row, impact.brick.col);
+                    const selected = key === selectedBrickKey;
+                    return (
+                      <li key={key}>
+                        <button
+                          type="button"
+                          className={`audit-brick ${selected ? 'is-selected' : ''}`}
+                          aria-pressed={selected}
+                          onClick={() => setSelectedBrickKey(key)}
+                          data-testid={`audit-brick-${index}`}
+                        >
+                          第 {impact.brick.row + 1} 行第 {impact.brick.col + 1}{' '}
+                          列（影响 {impact.brokenPairs.length} 对）
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {selectedImpact !== null && (
+                  <div className="audit-detail" data-testid="audit-detail">
+                    <p>
+                      移除第 {selectedImpact.brick.row + 1} 行第{' '}
+                      {selectedImpact.brick.col + 1}{' '}
+                      列导向砖后，以下{' '}
+                      <strong data-testid="audit-pair-count">
+                        {selectedImpact.brokenPairs.length}
+                      </strong>{' '}
+                      对入口—避难点断开（画布已突出该砖与对应端点）：
+                    </p>
+                    <ul className="audit-pairs">
+                      {selectedImpact.brokenPairs.map((pair) => (
+                        <li
+                          key={`${pair.entrance.row}-${pair.entrance.col}-${pair.shelter.row}-${pair.shelter.col}`}
+                          data-testid="audit-pair"
+                        >
+                          入口（第 {pair.entrance.row + 1} 行第{' '}
+                          {pair.entrance.col + 1} 列） → 避难点（第{' '}
+                          {pair.shelter.row + 1} 行第 {pair.shelter.col + 1}{' '}
+                          列）
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
           <section className="legend">
             <h3>图例与操作</h3>
             <ul>
@@ -357,6 +513,8 @@ export default function App() {
               <li><span className="swatch swatch-empty" />空白（不可通行）</li>
               <li><span className="swatch swatch-reachable" />可达区域高亮</li>
               <li><span className="swatch swatch-blocking" />相邻障碍高亮</li>
+              <li><span className="swatch swatch-audit-brick" />选中关键砖</li>
+              <li><span className="swatch swatch-audit-endpoint" />受影响端点</li>
             </ul>
             <p className="hint">
               鼠标 / 触摸：选择工具后点击或拖拽格子。<br />

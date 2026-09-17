@@ -16,6 +16,11 @@
   --block: rgba(248, 113, 113, 0.75);
   --block-ring: #dc2626;
 
+  --audit-brick: #ea580c;
+  --audit-brick-fill: rgba(251, 146, 60, 0.4);
+  --audit-endpoint: #0d9488;
+  --audit-endpoint-fill: rgba(45, 212, 191, 0.35);
+
   --cell-size: clamp(30px, 4.4vw, 46px);
   font-family:
     'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui,
@@ -291,6 +296,47 @@ body {
   pointer-events: none;
 }
 
+/* ---------- 单砖失效审计高亮 ---------- */
+
+.cell.is-audit-endpoint {
+  box-shadow: inset 0 0 0 3px var(--audit-endpoint);
+  z-index: 1;
+}
+
+.cell.is-audit-endpoint::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--audit-endpoint-fill);
+  pointer-events: none;
+}
+
+.cell.is-audit-brick {
+  box-shadow: inset 0 0 0 3px var(--audit-brick);
+  z-index: 2;
+}
+
+.cell.is-audit-brick::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--audit-brick-fill);
+  pointer-events: none;
+}
+
+.cell.is-audit-brick::before {
+  content: '!';
+  position: absolute;
+  top: 1px;
+  right: 4px;
+  font-size: calc(var(--cell-size) * 0.36);
+  font-weight: 800;
+  color: var(--audit-brick);
+  text-shadow: 0 0 2px #fff;
+  z-index: 3;
+  pointer-events: none;
+}
+
 /* ---------- 结果面板 ---------- */
 
 .panel {
@@ -395,6 +441,92 @@ body {
 .swatch-blocking {
   background: var(--block);
   box-shadow: inset 0 0 0 2px var(--block-ring);
+}
+.swatch-audit-brick {
+  background: var(--audit-brick-fill);
+  box-shadow: inset 0 0 0 2px var(--audit-brick);
+}
+.swatch-audit-endpoint {
+  background: var(--audit-endpoint-fill);
+  box-shadow: inset 0 0 0 2px var(--audit-endpoint);
+}
+
+/* ---------- 单砖失效审计面板 ---------- */
+
+.audit {
+  margin: 4px 0 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.audit h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.audit .action-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.audit-report {
+  margin-top: 10px;
+}
+
+.audit-summary {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.audit-bricks {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audit-brick {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.audit-brick:hover {
+  border-color: var(--audit-brick);
+}
+
+.audit-brick.is-selected {
+  border-color: var(--audit-brick);
+  background: #fff7ed;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.25);
+}
+
+.audit-detail {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  font-size: 13.5px;
+}
+
+.audit-detail p {
+  margin: 0 0 6px;
+}
+
+.audit-pairs {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-soft);
+  line-height: 1.7;
 }
 
 .hint {

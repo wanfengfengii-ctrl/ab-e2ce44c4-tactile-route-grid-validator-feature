@@ -22,6 +22,10 @@ interface GridBoardProps {
   failedEntrance: Cell | null;
   failedShelter: Cell | null;
   showOverlay: boolean;
+  /** 审计中选中的关键砖（cellKey），null 表示未选中。 */
+  auditBrickKey: number | null;
+  /** 选中关键砖影响到的入口 / 避难点（cellKey 集合）。 */
+  auditEndpointKeys: ReadonlySet<number>;
   onPaint: (row: number, col: number, type: CellType) => void;
   onFocusChange: (cell: Cell) => void;
   onCellKeyDown: (
@@ -56,6 +60,8 @@ export function GridBoard({
   failedEntrance,
   failedShelter,
   showOverlay,
+  auditBrickKey,
+  auditEndpointKeys,
   onPaint,
   onFocusChange,
   onCellKeyDown,
@@ -141,6 +147,8 @@ export function GridBoard({
             failedShelter !== null &&
             failedShelter.row === rowIndex &&
             failedShelter.col === colIndex;
+          const isAuditBrick = auditBrickKey === key;
+          const isAuditEndpoint = auditEndpointKeys.has(key);
           const classNames = [
             'cell',
             `cell-${type}`,
@@ -148,6 +156,8 @@ export function GridBoard({
             isBlocking ? 'is-blocking' : '',
             isFailedEntrance ? 'is-failed-entrance' : '',
             isFailedShelter ? 'is-failed-shelter' : '',
+            isAuditBrick ? 'is-audit-brick' : '',
+            isAuditEndpoint ? 'is-audit-endpoint' : '',
             focus.row === rowIndex && focus.col === colIndex
               ? 'is-focused'
               : '',
