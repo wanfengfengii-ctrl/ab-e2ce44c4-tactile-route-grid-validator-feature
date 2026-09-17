@@ -1,0 +1,42 @@
+services:
+  # 单个静态 Web：构建后由 nginx 托管 dist/。
+  # 宿主端口可用环境变量覆盖：WEB_PORT=9000 docker compose up -d web
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tactile-grid-validator:latest
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 3s
+
+  # 一次性验收服务：单元测试 + 对静态 web 容器执行 Playwright 端到端测试。
+  # 运行结束后容器退出，退出码 0 表示验收通过：
+  #   docker compose build verify && docker compose up --build verify
+  verify:
+    build:
+      context: .
+      dockerfile: Dockerfile.verify
+    image: tactile-grid-validator-verify:latest
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      # 不在验收容器内起服务器，直接对 web 静态站点执行 E2E。
+      E2E_NO_WEBSERVER: "1"
+      E2E_BASE_URL: "http://web/"
+      CI: "1"
+    command:
+      - sh
+      - -ec
+      - |
+        npm run test:unit
+        npm run build
+        npx playwright test
+    restart: "no"

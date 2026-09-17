@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+test-results
+playwright-report
+.npm-cache
+.npmrc
+.syslib
+.git
+.gitignore
+*.log
+.DS_Store

@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# 测试产物
+test-results/
+playwright-report/
+playwright/.cache/
+coverage/
+
+# 本地 npm 缓存（仅为容器内无 root 环境临时使用）
+.npm-cache/
+.npmrc
+
+# 为本机无 root 环境临时下载的系统库
+.syslib/
+
+# 日志与系统文件
+*.log
+.DS_Store
