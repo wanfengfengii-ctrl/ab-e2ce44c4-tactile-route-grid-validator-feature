@@ -209,3 +209,162 @@ test.describe('JSON 导出', () => {
     expect(data.grid[3][4]).toBe('shelter');
   });
 });
+
+test.describe('单砖失效审计', () => {
+  async function buildChain(page: Page) {
+    // E(0,0)-G(0,1)-G(0,2)-S(0,3) 直链：两块导向砖都是关键砖。
+    await page.getByTestId('clear-button').click();
+    await clickTool(page, 'entrance');
+    await cell(page, 0, 0).click();
+    await clickTool(page, 'guide');
+    await cell(page, 0, 1).click();
+    await cell(page, 0, 2).click();
+    await clickTool(page, 'shelter');
+    await cell(page, 0, 3).click();
+    await expect(page.getByTestId('result-ok')).toBeVisible();
+  }
+
+  async function buildCycle(page: Page) {
+    // 4 格环：E(2,2)-G(2,3)-G(3,3)-S(3,2)-E。
+    await page.getByTestId('clear-button').click();
+    await clickTool(page, 'entrance');
+    await cell(page, 2, 2).click();
+    await clickTool(page, 'guide');
+    await cell(page, 2, 3).click();
+    await cell(page, 3, 3).click();
+    await clickTool(page, 'shelter');
+    await cell(page, 3, 2).click();
+    await expect(page.getByTestId('result-ok')).toBeVisible();
+  }
+
+  test('连通未通过时审计按钮禁用；通过后启动并展示关键砖与画布高亮', async ({
+    page,
+  }) => {
+    // 初始示例连通失败：按钮禁用。
+    await expect(page.getByTestId('audit-button')).toBeDisabled();
+
+    await buildChain(page);
+    await expect(page.getByTestId('audit-button')).toBeEnabled();
+
+    // 启动前没有报告。
+    await expect(page.getByTestId('audit-report')).toHaveCount(0);
+    await page.getByTestId('audit-button').click();
+
+    await expect(page.getByTestId('audit-report')).toBeVisible();
+    await expect(page.getByTestId('critical-count')).toHaveText('2');
+    // 默认选中第一块（行优先）：(0,1)。
+    await expect(page.getByTestId('selected-brick-row')).toHaveText('1');
+    await expect(page.getByTestId('selected-brick-col')).toHaveText('2');
+    const pairItems = page.getByTestId('critical-pair');
+    await expect(pairItems).toHaveCount(1);
+    await expect(pairItems).toContainText(/第 1 行第1 列/);
+
+    // 画布突出选中砖与对应端点。
+    await expect(cell(page, 0, 1)).toHaveClass(/is-critical-brick/);
+    await expect(cell(page, 0, 2)).not.toHaveClass(/is-critical-brick/);
+    await expect(cell(page, 0, 0)).toHaveClass(/is-audit-entrance/);
+    await expect(cell(page, 0, 3)).toHaveClass(/is-audit-shelter/);
+  });
+
+  test('切换关键砖：画布高亮随选择移动，受影响关系随之更新', async ({
+    page,
+  }) => {
+    await buildChain(page);
+    await page.getByTestId('audit-button').click();
+    await expect(page.getByTestId('audit-report')).toBeVisible();
+
+    const select = page.getByTestId('critical-select');
+    await select.selectOption({ value: '2' }); // (0,2) 的 key = 0*12+2
+
+    await expect(page.getByTestId('selected-brick-col')).toHaveText('3');
+    await expect(cell(page, 0, 2)).toHaveClass(/is-critical-brick/);
+    await expect(cell(page, 0, 1)).not.toHaveClass(/is-critical-brick/);
+    // 端点高亮不变（两块砖断开的是同一对关系）。
+    await expect(cell(page, 0, 0)).toHaveClass(/is-audit-entrance/);
+    await expect(cell(page, 0, 3)).toHaveClass(/is-audit-shelter/);
+  });
+
+  test('无关键砖时明确显示网络可承受任一单砖失效', async ({ page }) => {
+    await buildCycle(page);
+    await page.getByTestId('audit-button').click();
+    await expect(page.getByTestId('audit-resilient')).toBeVisible();
+    await expect(page.getByTestId('audit-report')).toHaveCount(0);
+    // 无关键砖可高亮。
+    await expect(cell(page, 2, 3)).not.toHaveClass(/is-critical-brick/);
+  });
+
+  test('编辑后审计报告失效：高亮与报告一起消失，可重新启动', async ({
+    page,
+  }) => {
+    await buildChain(page);
+    await page.getByTestId('audit-button').click();
+    await expect(page.getByTestId('audit-report')).toBeVisible();
+    await expect(cell(page, 0, 1)).toHaveClass(/is-critical-brick/);
+
+    // 补一块导向砖（不改变连通性的普通编辑），报告立即撤销。
+    await clickTool(page, 'guide');
+    await cell(page, 1, 1).click();
+    await expect(page.getByTestId('audit-report')).toHaveCount(0);
+    await expect(page.getByTestId('audit-resilient')).toHaveCount(0);
+    await expect(cell(page, 0, 1)).not.toHaveClass(/is-critical-brick/);
+    await expect(cell(page, 0, 0)).not.toHaveClass(/is-audit-entrance/);
+
+    // 连通仍通过，可重新启动审计。
+    await expect(page.getByTestId('result-ok')).toBeVisible();
+    await page.getByTestId('audit-button').click();
+    await expect(page.getByTestId('audit-report')).toBeVisible();
+  });
+
+  test('清空后审计报告失效', async ({ page }) => {
+    await buildChain(page);
+    await page.getByTestId('audit-button').click();
+    await expect(page.getByTestId('audit-report')).toBeVisible();
+
+    await page.getByTestId('clear-button').click();
+    await expect(page.getByTestId('audit-report')).toHaveCount(0);
+    await expect(page.getByTestId('audit-resilient')).toHaveCount(0);
+    // 端点不合法时按钮禁用。
+    await expect(page.getByTestId('audit-button')).toBeDisabled();
+  });
+
+  test('合法导入撤销旧报告；非法导入保持原网格且不生成审计结果', async ({
+    page,
+  }) => {
+    const writeJson = (name: string, data: unknown) => {
+      const path = join(tmpdir(), name);
+      writeFileSync(path, JSON.stringify(data), 'utf8');
+      return path;
+    };
+    const cycleGrid = Array.from({ length: 12 }, () =>
+      Array<string>(12).fill('empty'),
+    );
+    cycleGrid[2][2] = 'entrance';
+    cycleGrid[2][3] = 'guide';
+    cycleGrid[3][3] = 'guide';
+    cycleGrid[3][2] = 'shelter';
+
+    await buildChain(page);
+    await page.getByTestId('audit-button').click();
+    await expect(page.getByTestId('audit-report')).toBeVisible();
+
+    // 非法导入：网格保持链状，旧报告撤销且不生成新结果。
+    const bad = cycleGrid.slice(0, 11);
+    await page
+      .getByTestId('import-file')
+      .setInputFiles(writeJson('audit-bad.json', { version: 1, grid: bad }));
+    await expect(page.getByTestId('import-error')).toBeVisible();
+    await expect(page.getByTestId('audit-report')).toHaveCount(0);
+    await expect(cell(page, 0, 1)).toHaveAttribute('data-type', 'guide');
+    await expect(cell(page, 0, 1)).not.toHaveClass(/is-critical-brick/);
+
+    // 合法导入（环）：报告同样被撤销；重新启动后显示可承受单砖失效。
+    await page
+      .getByTestId('import-file')
+      .setInputFiles(writeJson('audit-cycle.json', { version: 1, grid: cycleGrid }));
+    await expect(page.getByTestId('import-error')).toHaveCount(0);
+    await expect(page.getByTestId('audit-report')).toHaveCount(0);
+    await expect(cell(page, 0, 1)).toHaveAttribute('data-type', 'empty');
+    await page.getByTestId('audit-button').click();
+    await expect(page.getByTestId('audit-resilient')).toBeVisible();
+  });
+});

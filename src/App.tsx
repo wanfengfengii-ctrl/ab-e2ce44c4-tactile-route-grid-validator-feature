@@ -10,10 +10,12 @@ import {
   CELL_TYPES,
   GRID_SIZE,
   type CellType,
+  type FailureAudit,
   type Grid,
   compareRowMajor,
   countCellTypes,
   validateGrid,
+  auditSingleBrickFailure,
 } from './grid';
 import { GridImportError, gridToJson, parseGridJson } from './io';
 import { GridBoard } from './components/GridBoard';
@@ -53,6 +55,10 @@ export default function App() {
   const [tool, setTool] = useState<CellType>('guide');
   const [focus, setFocus] = useState({ row: 0, col: 0 });
   const [importError, setImportError] = useState<string | null>(null);
+  // 单砖失效审计报告：仅在用户于“全连通且端点合法”时主动启动后存在；
+  // 任何编辑、合法导入或清空都会撤销报告。
+  const [audit, setAudit] = useState<FailureAudit | null>(null);
+  const [selectedBrickKey, setSelectedBrickKey] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 网格任意变化即重算，旧结果被立即替换。
@@ -64,6 +70,38 @@ export default function App() {
     counts.entrance <= 4 &&
     counts.shelter >= 1 &&
     counts.shelter <= 4;
+
+  const auditReady = endpointsValid && failure === null;
+
+  const selectedCritical = useMemo(() => {
+    if (!audit) return null;
+    return (
+      audit.criticalGuides.find(
+        ({ brick }) =>
+          brick.row * GRID_SIZE + brick.col === selectedBrickKey,
+      ) ?? null
+    );
+  }, [audit, selectedBrickKey]);
+
+  const auditEntranceKeys = useMemo(() => {
+    const keys = new Set<number>();
+    if (selectedCritical) {
+      for (const { entrance } of selectedCritical.pairs) {
+        keys.add(entrance.row * GRID_SIZE + entrance.col);
+      }
+    }
+    return keys;
+  }, [selectedCritical]);
+
+  const auditShelterKeys = useMemo(() => {
+    const keys = new Set<number>();
+    if (selectedCritical) {
+      for (const { shelter } of selectedCritical.pairs) {
+        keys.add(shelter.row * GRID_SIZE + shelter.col);
+      }
+    }
+    return keys;
+  }, [selectedCritical]);
 
   const reachableKeys = useMemo(() => {
     if (!failure) return new Set<number>();
@@ -92,6 +130,9 @@ export default function App() {
         next[row][col] = type;
         return next;
       });
+      // 任何编辑都会撤销审计报告。
+      setAudit(null);
+      setSelectedBrickKey(null);
       setImportError(null);
     },
     [],
@@ -148,8 +189,11 @@ export default function App() {
   );
 
   // 导入被拒绝时：整份拒绝（保留当前网格）、清除旧结论、显示错误。
+  // 拒绝不改动网格，也不生成审计结果（旧审计同样撤销）。
   const rejectImport = useCallback((message: string) => {
     setImportError(message);
+    setAudit(null);
+    setSelectedBrickKey(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
 
@@ -159,6 +203,9 @@ export default function App() {
         const text = await file.text();
         const parsed = parseGridJson(text);
         setGrid(parsed);
+        // 合法导入同样撤销旧报告，需在新网格上重新启动审计。
+        setAudit(null);
+        setSelectedBrickKey(null);
         setImportError(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       } catch (error) {
@@ -200,7 +247,27 @@ export default function App() {
         Array<CellType>(GRID_SIZE).fill('empty'),
       ),
     );
+    // 清空同样撤销审计报告。
+    setAudit(null);
+    setSelectedBrickKey(null);
     setImportError(null);
+  }, []);
+
+  // 仅在现有连通判定通过且端点数量合法时允许启动审计。
+  const onRunAudit = useCallback(() => {
+    if (!auditReady) return;
+    const result = auditSingleBrickFailure(grid);
+    setAudit(result);
+    setSelectedBrickKey(
+      result.criticalGuides.length > 0
+        ? (result.criticalGuides[0].brick.row * GRID_SIZE +
+            result.criticalGuides[0].brick.col)
+        : null,
+    );
+  }, [auditReady, grid]);
+
+  const onSelectCritical = useCallback((key: number) => {
+    setSelectedBrickKey(key);
   }, []);
 
   // 导入失败时不展示旧判定结论（旧结论被错误提示替换）。
@@ -280,6 +347,10 @@ export default function App() {
           failedEntrance={failure?.entrance ?? null}
           failedShelter={failure?.shelter ?? null}
           showOverlay={!resultSuppressed && failure !== null}
+          criticalBrickKey={selectedBrickKey}
+          auditEntranceKeys={auditEntranceKeys}
+          auditShelterKeys={auditShelterKeys}
+          showAudit={!resultSuppressed && audit !== null}
           onPaint={paintCell}
           onFocusChange={setFocus}
           onCellKeyDown={onCellKeyDown}
@@ -347,6 +418,115 @@ export default function App() {
             </div>
           )}
 
+          <section className="audit" aria-label="单砖失效审计">
+            <h3>单砖失效审计</h3>
+            <p className="hint">
+              判断任意一块导向砖损坏后，是否仍能从每个入口抵达每个避难点。
+              审计在当前正交无向图上做一次低链值遍历，无需逐砖重复搜索。
+            </p>
+            <button
+              type="button"
+              className="action-button"
+              onClick={onRunAudit}
+              disabled={!auditReady || importError !== null}
+              data-testid="audit-button"
+            >
+              启动单砖失效审计
+            </button>
+            {importError === null && !auditReady && (
+              <p className="hint" data-testid="audit-disabled-hint">
+                需先通过现有连通判定且入口 / 避难点数量合法（各 1–4 个），
+                才能启动审计。
+              </p>
+            )}
+
+            {audit !== null && audit.criticalGuides.length === 0 && (
+              <div
+                className="banner banner--ok"
+                role="status"
+                data-testid="audit-resilient"
+              >
+                ✔ 网络可承受任一单砖失效：任意一块导向砖损坏后，
+                每个入口仍能到达每个避难点。
+              </div>
+            )}
+
+            {audit !== null && audit.criticalGuides.length > 0 && (
+              <div className="audit-report" data-testid="audit-report">
+                <p className="audit-summary">
+                  发现
+                  {' '}
+                  <strong data-testid="critical-count">
+                    {audit.criticalGuides.length}
+                  </strong>
+                  {' '}
+                  块关键导向砖（按行优先排列）。选择一块砖，
+                  画布会突出它及移除后受影响的入口 / 避难点。
+                </p>
+                <label className="critical-select-label">
+                  选择关键砖：
+                  <select
+                    className="critical-select"
+                    value={selectedBrickKey ?? ''}
+                    onChange={(event) =>
+                      onSelectCritical(Number(event.target.value))
+                    }
+                    data-testid="critical-select"
+                  >
+                    {audit.criticalGuides.map(({ brick, pairs }) => {
+                      const key = brick.row * GRID_SIZE + brick.col;
+                      return (
+                        <option key={key} value={key}>
+                          第 {brick.row + 1} 行第 {brick.col + 1} 列（影响
+                          {pairs.length} 对）
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+
+                {selectedCritical && (
+                  <div className="pair-panel" data-testid="pair-panel">
+                    <p className="pair-title">
+                      移除关键砖（第
+                      {' '}
+                      <span data-testid="selected-brick-row">
+                        {selectedCritical.brick.row + 1}
+                      </span>
+                      行第
+                      <span data-testid="selected-brick-col">
+                        {selectedCritical.brick.col + 1}
+                      </span>
+                      列）后断开的入口—避难点对（共
+                      {' '}
+                      <strong>{selectedCritical.pairs.length}</strong> 对）：
+                    </p>
+                    <ul className="pair-list">
+                      {selectedCritical.pairs.map(
+                        ({ entrance, shelter }) => (
+                          <li
+                            key={`${entrance.row}-${entrance.col}-${shelter.row}-${shelter.col}`}
+                            className="pair-item"
+                            data-testid="critical-pair"
+                          >
+                            入口（第 {entrance.row + 1} 行第
+                            {entrance.col + 1} 列）
+                            <span aria-hidden="true"> → </span>
+                            避难点（第 {shelter.row + 1} 行第
+                            {shelter.col + 1} 列）
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+                )}
+                <p className="hint">
+                  任意编辑、合法导入或清空都会撤销本报告，需重新启动审计。
+                </p>
+              </div>
+            )}
+          </section>
+
           <section className="legend">
             <h3>图例与操作</h3>
             <ul>
@@ -357,6 +537,9 @@ export default function App() {
               <li><span className="swatch swatch-empty" />空白（不可通行）</li>
               <li><span className="swatch swatch-reachable" />可达区域高亮</li>
               <li><span className="swatch swatch-blocking" />相邻障碍高亮</li>
+              <li><span className="swatch swatch-critical" />关键砖高亮</li>
+              <li><span className="swatch swatch-audit-entrance" />受影响入口</li>
+              <li><span className="swatch swatch-audit-shelter" />受影响避难点</li>
             </ul>
             <p className="hint">
               鼠标 / 触摸：选择工具后点击或拖拽格子。<br />

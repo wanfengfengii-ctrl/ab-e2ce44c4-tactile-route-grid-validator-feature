@@ -22,6 +22,12 @@ interface GridBoardProps {
   failedEntrance: Cell | null;
   failedShelter: Cell | null;
   showOverlay: boolean;
+  /** 单砖失效审计：当前选中的关键砖。 */
+  criticalBrickKey: number | null;
+  /** 选中关键砖受影响关系中的全部入口 / 避难点。 */
+  auditEntranceKeys: ReadonlySet<number>;
+  auditShelterKeys: ReadonlySet<number>;
+  showAudit: boolean;
   onPaint: (row: number, col: number, type: CellType) => void;
   onFocusChange: (cell: Cell) => void;
   onCellKeyDown: (
@@ -56,6 +62,10 @@ export function GridBoard({
   failedEntrance,
   failedShelter,
   showOverlay,
+  criticalBrickKey,
+  auditEntranceKeys,
+  auditShelterKeys,
+  showAudit,
   onPaint,
   onFocusChange,
   onCellKeyDown,
@@ -141,6 +151,10 @@ export function GridBoard({
             failedShelter !== null &&
             failedShelter.row === rowIndex &&
             failedShelter.col === colIndex;
+          const isCriticalBrick = showAudit && criticalBrickKey === key;
+          const isAuditEntrance =
+            showAudit && auditEntranceKeys.has(key);
+          const isAuditShelter = showAudit && auditShelterKeys.has(key);
           const classNames = [
             'cell',
             `cell-${type}`,
@@ -148,6 +162,9 @@ export function GridBoard({
             isBlocking ? 'is-blocking' : '',
             isFailedEntrance ? 'is-failed-entrance' : '',
             isFailedShelter ? 'is-failed-shelter' : '',
+            isCriticalBrick ? 'is-critical-brick' : '',
+            isAuditEntrance ? 'is-audit-entrance' : '',
+            isAuditShelter ? 'is-audit-shelter' : '',
             focus.row === rowIndex && focus.col === colIndex
               ? 'is-focused'
               : '',
